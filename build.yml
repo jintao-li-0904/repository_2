@@ -1,0 +1,162 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller pandas openpyxl streamlit
+    
+    - name: Create launcher script
+      run: |
+        @'
+        import os
+        import sys
+        import subprocess
+        import webbrowser
+        import time
+
+        if getattr(sys, 'frozen', False):
+            base_path = sys._MEIPASS
+        else:
+            base_path = os.path.dirname(os.path.abspath(__file__))
+
+        os.chdir(base_path)
+        sys.path.insert(0, base_path)
+
+        print("="*60)
+        print("医疗产品短名称生成器 v1.0")
+        print("="*60)
+        print("\n正在启动应用...")
+        print("\n提示：如果浏览器没有自动打开，请访问 http://localhost:8501")
+        print("\n按 Ctrl+C 停止程序")
+        print("="*60)
+
+        try:
+            time.sleep(1)
+            webbrowser.open('http://localhost:8501')
+            subprocess.run([sys.executable, '-m', 'streamlit', 'run', 'app_streamlit.py',
+                            '--server.port', '8501', '--server.headless', 'true'])
+        except KeyboardInterrupt:
+            print("\n程序已停止")
+        except Exception as e:
+            print(f"\n错误：{e}")
+            input("\n按回车键退出...")
+        '@ | Out-File -FilePath launcher.py -Encoding utf8
+    
+    - name: Build with PyInstaller
+      run: |
+        pyinstaller --onefile `
+          --name="医疗产品短名称生成器" `
+          --add-data="processor.py;." `
+          --add-data="app_streamlit.py;." `
+          --hidden-import=streamlit `
+          --hidden-import=pandas `
+          --hidden-import=openpyxl `
+          --collect-all=streamlit `
+          --noconfirm `
+          --clean `
+          launcher.py
+    
+    - name: Create release files
+      run: |
+        New-Item -ItemType Directory -Force -Path release
+        Copy-Item "dist\医疗产品短名称生成器.exe" -Destination "release\"
+        
+        # 创建使用说明
+        @'
+        医疗产品短名称生成器 使用说明
+        =====================================
+
+        1. 准备工作：
+           - 将您的词典文件（merged_dictionary.xlsx）放在与本程序相同的目录下
+
+        2. 运行程序：
+           - 双击运行"医疗产品短名称生成器.exe"
+           - 程序会自动打开浏览器显示操作界面
+
+        3. 使用步骤：
+           - 在左侧上传或选择词典文件
+           - 在输入框中输入完整的产品描述
+           - 点击"生成短名称"按钮
+           - 查看生成的结果和详细分解
+
+        4. 注意事项：
+           - 首次运行可能需要等待几秒钟
+           - 如果浏览器没有自动打开，请手动访问 http://localhost:8501
+           - 按Ctrl+C或关闭命令行窗口可以停止程序
+
+        5. 系统要求：
+           - Windows 7/8/10/11
+           - 无需安装Python
+
+        如有问题，请联系技术支持。
+        '@ | Out-File -FilePath "release\使用说明.txt" -Encoding utf8
+        
+        # 创建词典格式说明
+        @'
+        词典文件格式说明
+        ==================
+
+        词典文件应为Excel格式（.xlsx），包含两列：
+        - 第一列：完整词汇（Full Term）
+        - 第二列：缩写（Abbreviation）
+
+        示例：
+        Full Term     | Abbreviation
+        --------------|-------------
+        milliliter   | ML
+        surgical     | SURG
+        kilogram     | KG
+
+        将您的词典文件命名为 merged_dictionary.xlsx 
+        并放在与程序相同的目录下即可。
+        '@ | Out-File -FilePath "release\词典格式说明.txt" -Encoding utf8
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: 医疗产品短名称生成器-Windows
+        path: release/*
+    
+    - name: Create Release
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v1.0.${{ github.run_number }}
+        name: Release v1.0.${{ github.run_number }}
+        body: |
+          医疗产品短名称生成器 Windows版本
+          
+          ## 下载说明
+          1. 下载下方的 `医疗产品短名称生成器-Windows.zip`
+          2. 解压到任意文件夹
+          3. 添加您的词典文件 `merged_dictionary.xlsx`
+          4. 双击运行 `医疗产品短名称生成器.exe`
+          
+          ## 更新内容
+          - 自动构建版本 ${{ github.run_number }}
+          - 构建时间：${{ github.event.head_commit.timestamp }}
+        files: release/*
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
